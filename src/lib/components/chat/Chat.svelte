@@ -2705,7 +2705,8 @@
 
 		if (
 			($config?.file?.max_count ?? null) !== null &&
-			files.length + chatFiles.length > $config?.file?.max_count
+			files.filter((file) => file.type !== 'reference_capsule').length + chatFiles.length >
+				$config?.file?.max_count
 		) {
 			toast.error(
 				$i18n.t(`You can only chat with a maximum of {{maxCount}} file(s) at a time.`, {
@@ -2935,10 +2936,14 @@
 	};
 
 	const getFeatures = () => {
-		let features = {};
+		let features = {
+			memory: false,
+			chat_history: false
+		};
 
 		if ($config?.features)
 			features = {
+				...features,
 				voice: $showCallOverlay,
 				image_generation:
 					$config?.features?.enable_image_generation &&
@@ -2952,10 +2957,6 @@
 						: false,
 				web_search: webSearchActive
 			};
-
-		if ($settings?.memory ?? $config?.features?.enable_memories ?? false) {
-			features = { ...features, memory: true };
-		}
 
 		return features;
 	};
@@ -2989,6 +2990,13 @@
 	) => {
 		const responseMessage = _history.messages[responseMessageId];
 		const userMessage = _history.messages[responseMessage.parentId];
+		const referenceCapsuleIds = [
+			...new Set(
+				(userMessage?.files ?? [])
+					.filter((item) => item.type === 'reference_capsule' && item.id)
+					.map((item) => item.id)
+			)
+		];
 
 		const chatMessageFiles = _messages
 			.filter((message) => message.files)
@@ -3134,6 +3142,7 @@
 				},
 
 				files: (files?.length ?? 0) > 0 ? files : undefined,
+				reference_capsule_ids: referenceCapsuleIds.length > 0 ? referenceCapsuleIds : undefined,
 
 				filter_ids: selectedFilterIds.length > 0 ? selectedFilterIds : undefined,
 				tool_ids: toolIds.length > 0 ? toolIds : undefined,
@@ -3501,6 +3510,10 @@
 					models: selectedModels,
 					system: $settings.system ?? undefined,
 					params: params,
+					household_features: {
+						memory: false,
+						chat_history: false
+					},
 					history: history,
 					messages: createMessagesList(history, history.currentId),
 					tags: [],
@@ -3545,6 +3558,10 @@
 					history: history,
 					messages: createMessagesList(history, history.currentId),
 					params: params,
+					household_features: {
+						memory: false,
+						chat_history: false
+					},
 					files: chatFiles
 				});
 			}
@@ -3554,11 +3571,21 @@
 	const saveControls = async () => {
 		if (!$chatId || $temporaryChatEnabled) return;
 		const loaded = chat?.chat ?? {};
-		if (equal(params, loaded.params ?? {}) && equal(chatFiles, loaded.files ?? [])) return;
+		const householdFeatures = {
+			memory: false,
+			chat_history: false
+		};
+		if (
+			equal(params, loaded.params ?? {}) &&
+			equal(chatFiles, loaded.files ?? []) &&
+			equal(householdFeatures, loaded.household_features ?? householdFeatures)
+		)
+			return;
 
 		const res = await updateChatById(localStorage.token, $chatId, {
 			params,
-			files: chatFiles
+			files: chatFiles,
+			household_features: householdFeatures
 		}).catch((err) => {
 			console.error('[controls autosave]', err);
 			return null;
@@ -3952,6 +3979,7 @@
 								>
 									<MessageInput
 										bind:this={messageInput}
+										showHouseholdModes={!embedded}
 										{history}
 										{taskIds}
 										bind:selectedModels
@@ -4071,6 +4099,7 @@
 								<div id={embedded ? messageInputDropzoneId : undefined} class="pb-2 z-10">
 									<MessageInput
 										bind:this={messageInput}
+										showHouseholdModes={false}
 										{history}
 										{taskIds}
 										bind:selectedModels
@@ -4137,7 +4166,6 @@
 									toolServers={$toolServers}
 									{stopResponse}
 									{createMessagePair}
-									{onSelect}
 									{onUpload}
 									onWebSearchToggle={handleWebSearchToggle}
 									on:chatVariables={() => {

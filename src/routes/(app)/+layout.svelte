@@ -13,7 +13,7 @@
 	import { getTools } from '$lib/apis/tools';
 	import { getBanners } from '$lib/apis/configs';
 	import { getTerminalServers } from '$lib/apis/terminal';
-	import { getUserSettings } from '$lib/apis/users';
+	import { getAndUpdateUserLocation, getUserSettings, updateUserSettings } from '$lib/apis/users';
 	import { setTextScale } from '$lib/utils/text-scale';
 
 	import { WEBUI_VERSION, WEBUI_API_BASE_URL } from '$lib/constants';
@@ -46,6 +46,7 @@
 	import Sidebar from '$lib/components/layout/Sidebar.svelte';
 	import SettingsModal from '$lib/components/chat/SettingsModal.svelte';
 	import ChangelogModal from '$lib/components/ChangelogModal.svelte';
+	import LocationConsentModal from '$lib/components/chat/LocationConsentModal.svelte';
 	import AccountPending from '$lib/components/layout/Overlay/AccountPending.svelte';
 	import UpdateInfoToast from '$lib/components/layout/UpdateInfoToast.svelte';
 	import Spinner from '$lib/components/common/Spinner.svelte';
@@ -59,6 +60,53 @@
 
 	let version;
 	let handledSettingsUrl = '';
+	let showLocationConsent = false;
+	let locationConsentBusy = false;
+	let locationConsentError = '';
+
+	const saveLocationPreference = async (enabled: boolean) => {
+		const nextSettings = {
+			...$settings,
+			userLocation: enabled,
+			locationConsentVersion: 1
+		};
+		settings.set(nextSettings);
+		await updateUserSettings(localStorage.token, { ui: nextSettings });
+	};
+
+	const allowLocation = async () => {
+		locationConsentBusy = true;
+		locationConsentError = '';
+		try {
+			await getAndUpdateUserLocation(localStorage.token, { force: true });
+			await saveLocationPreference(true);
+			showLocationConsent = false;
+		} catch (error) {
+			locationConsentError =
+				error instanceof Error ? error.message : 'This browser could not provide a location.';
+		} finally {
+			locationConsentBusy = false;
+		}
+	};
+
+	const skipLocation = async () => {
+		locationConsentBusy = true;
+		locationConsentError = '';
+		try {
+			await saveLocationPreference(false);
+			showLocationConsent = false;
+		} catch (error) {
+			locationConsentError =
+				error instanceof Error ? error.message : 'The location preference could not be saved.';
+		} finally {
+			locationConsentBusy = false;
+		}
+	};
+
+	const refreshLocationInBackground = async () => {
+		if (!$settings?.userLocation || !localStorage.token) return;
+		await getAndUpdateUserLocation(localStorage.token).catch(() => null);
+	};
 
 	const clearChatInputStorage = () => {
 		const chatInputKeys = Object.keys(localStorage).filter((key) => key.startsWith('chat-input'));
@@ -243,6 +291,22 @@
 		}
 	};
 
+	onMount(() => {
+		const handleVisible = () => {
+			if (document.visibilityState === 'visible') {
+				void refreshLocationInBackground();
+			}
+		};
+		const handlePageShow = () => void refreshLocationInBackground();
+
+		document.addEventListener('visibilitychange', handleVisible);
+		window.addEventListener('pageshow', handlePageShow);
+		return () => {
+			document.removeEventListener('visibilitychange', handleVisible);
+			window.removeEventListener('pageshow', handlePageShow);
+		};
+	});
+
 	onMount(async () => {
 		if ($user === undefined || $user === null) {
 			await gotoAuth();
@@ -261,6 +325,12 @@
 				await setModels().catch((e) => console.error('Failed to load models:', e));
 			}).catch((e) => console.error('Failed to load user settings:', e))
 		]);
+
+		if (($settings as any)?.locationConsentVersion !== 1) {
+			showLocationConsent = true;
+		} else if ($settings?.userLocation) {
+			void refreshLocationInBackground();
+		}
 
 		selectedTerminalId.set(localStorage.selectedTerminalId ?? null);
 
@@ -438,6 +508,13 @@
 
 <SettingsModal bind:show={$showSettings} />
 <ChangelogModal bind:show={$showChangelog} />
+<LocationConsentModal
+	bind:show={showLocationConsent}
+	busy={locationConsentBusy}
+	errorMessage={locationConsentError}
+	on:allow={allowLocation}
+	on:skip={skipLocation}
+/>
 
 {#if version && compareVersion(version.latest, version.current) && ($settings?.showUpdateToast ?? true)}
 	<div class=" absolute bottom-8 right-8 z-50" in:fade={{ duration: 100 }}>

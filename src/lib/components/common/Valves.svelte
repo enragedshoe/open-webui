@@ -14,6 +14,8 @@
 
 	export let valvesSpec = null;
 	export let valves = {};
+
+	$: compactMode = valvesSpec?.['x-openwebui-compact'] === true;
 </script>
 
 {#if valvesSpec && Object.keys(valvesSpec?.properties ?? {}).length}
@@ -28,46 +30,48 @@
 					{/if}
 				</div>
 
-				<button
-					class="px-2 py-1 text-xs flex rounded-lg transition hover:bg-gray-50/70 dark:hover:bg-gray-850/50"
-					type="button"
-					on:click={() => {
-						const propertySpec = valvesSpec.properties[property] ?? {};
+				{#if !compactMode}
+					<button
+						class="px-2 py-1 text-xs flex rounded-lg transition hover:bg-gray-50/70 dark:hover:bg-gray-850/50"
+						type="button"
+						on:click={() => {
+							const propertySpec = valvesSpec.properties[property] ?? {};
 
-						if ((valves[property] ?? null) === null) {
-							// Initialize to custom value
-							if ((propertySpec?.type ?? null) === 'array') {
-								const defaultArray = propertySpec?.default ?? [];
-								if (propertySpec?.input?.type === 'multiselect') {
-									valves[property] = Array.isArray(defaultArray) ? [...defaultArray] : [];
+							if ((valves[property] ?? null) === null) {
+								// Initialize to custom value
+								if ((propertySpec?.type ?? null) === 'array') {
+									const defaultArray = propertySpec?.default ?? [];
+									if (propertySpec?.input?.type === 'multiselect') {
+										valves[property] = Array.isArray(defaultArray) ? [...defaultArray] : [];
+									} else {
+										valves[property] = Array.isArray(defaultArray) ? defaultArray.join(', ') : '';
+									}
 								} else {
-									valves[property] = Array.isArray(defaultArray) ? defaultArray.join(', ') : '';
+									valves[property] = propertySpec?.default ?? '';
 								}
 							} else {
-								valves[property] = propertySpec?.default ?? '';
+								valves[property] = null;
 							}
-						} else {
-							valves[property] = null;
-						}
 
-						dispatch('change');
-					}}
-				>
-					{#if (valves[property] ?? null) === null}
-						<span class="ml-2 self-center">
-							{#if (valvesSpec?.required ?? []).includes(property)}
-								{$i18n.t('None')}
-							{:else}
-								{$i18n.t('Default')}
-							{/if}
-						</span>
-					{:else}
-						<span class="ml-2 self-center"> {$i18n.t('Custom')} </span>
-					{/if}
-				</button>
+							dispatch('change');
+						}}
+					>
+						{#if (valves[property] ?? null) === null}
+							<span class="ml-2 self-center">
+								{#if (valvesSpec?.required ?? []).includes(property)}
+									{$i18n.t('None')}
+								{:else}
+									{$i18n.t('Default')}
+								{/if}
+							</span>
+						{:else}
+							<span class="ml-2 self-center"> {$i18n.t('Custom')} </span>
+						{/if}
+					</button>
+				{/if}
 			</div>
 
-			{#if (valves[property] ?? null) !== null}
+			{#if compactMode || (valves[property] ?? null) !== null}
 				<!-- {valves[property]} -->
 				<div class="flex mt-0.5 mb-0.5 space-x-2">
 					<div class=" flex-1">
@@ -87,11 +91,13 @@
 							</select>
 						{:else if (valvesSpec.properties[property]?.type ?? null) === 'boolean'}
 							<div class="flex justify-between items-center">
-								<div class="text-xs text-gray-500">
-									{valves[property] ? $i18n.t('Enabled') : $i18n.t('Disabled')}
-								</div>
+								{#if !compactMode}
+									<div class="text-xs text-gray-500">
+										{valves[property] ? $i18n.t('Enabled') : $i18n.t('Disabled')}
+									</div>
+								{/if}
 
-								<div class=" pr-2">
+								<div class="ml-auto pr-2">
 									<Switch
 										bind:state={valves[property]}
 										on:change={() => {
@@ -144,6 +150,19 @@
 									options={valvesSpec.properties[property].input.options}
 									placeholder={valvesSpec.properties[property]?.description ??
 										$i18n.t('Select an option')}
+									on:change={() => {
+										dispatch('change');
+									}}
+								/>
+							{:else if valvesSpec.properties[property]?.input?.type === 'text'}
+								<input
+									type="text"
+									class="w-full rounded-lg py-2 px-4 text-sm dark:text-gray-300 dark:bg-gray-850 outline-hidden border border-gray-100/30 dark:border-gray-850/30"
+									placeholder={valvesSpec.properties[property]?.description ??
+										valvesSpec.properties[property].title}
+									bind:value={valves[property]}
+									autocomplete="off"
+									required={(valvesSpec?.required ?? []).includes(property)}
 									on:change={() => {
 										dispatch('change');
 									}}

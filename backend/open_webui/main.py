@@ -27,7 +27,7 @@ from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel
 from sqlalchemy import text
 from sqlalchemy.ext.asyncio import AsyncSession
-from starlette.datastructures import Headers
+from starlette.datastructures import Headers, MutableHeaders
 from starlette.exceptions import HTTPException as StarletteHTTPException
 from starlette.middleware.sessions import SessionMiddleware
 from starlette.responses import Response, StreamingResponse
@@ -160,6 +160,7 @@ from open_webui.routers import (
     openai,
     pipelines,
     prompts,
+    reference_capsules,
     retrieval,
     scim,
     skills,
@@ -300,6 +301,43 @@ class CORSStaticFiles(StaticFiles):
         response = await super().get_response(path, scope)
         response.headers['Access-Control-Allow-Origin'] = '*'
         return response
+
+
+class PyodideStaticCORSMiddleware:
+    """Allow the opaque sandbox origin to load only the local Pyodide assets."""
+
+    def __init__(self, app):
+        self.app = app
+
+    async def __call__(self, scope, receive, send):
+        if scope['type'] != 'http' or not scope.get('path', '').startswith('/pyodide/'):
+            await self.app(scope, receive, send)
+            return
+
+        if scope.get('method') == 'OPTIONS':
+            request_headers = Headers(scope=scope)
+            allow_headers = request_headers.get('access-control-request-headers', '*')
+            response = Response(
+                status_code=204,
+                headers={
+                    'Access-Control-Allow-Origin': '*',
+                    'Access-Control-Allow-Methods': 'GET, HEAD, OPTIONS',
+                    'Access-Control-Allow-Headers': allow_headers,
+                    'Access-Control-Max-Age': '86400',
+                    'Vary': 'Origin, Access-Control-Request-Headers',
+                },
+            )
+            await response(scope, receive, send)
+            return
+
+        async def send_with_cors(message):
+            if message['type'] == 'http.response.start':
+                headers = MutableHeaders(scope=message)
+                headers['Access-Control-Allow-Origin'] = '*'
+                headers.add_vary_header('Origin')
+            await send(message)
+
+        await self.app(scope, receive, send_with_cors)
 
 
 if LOG_FORMAT != 'json':
@@ -812,6 +850,11 @@ app.include_router(tools.router, prefix='/api/v1/tools', tags=['tools'])
 app.include_router(skills.router, prefix='/api/v1/skills', tags=['skills'])
 
 app.include_router(memories.router, prefix='/api/v1/memories', tags=['memories'])
+app.include_router(
+    reference_capsules.router,
+    prefix='/api/v1/reference-capsules',
+    tags=['reference-capsules'],
+)
 app.include_router(folders.router, prefix='/api/v1/folders', tags=['folders'])
 app.include_router(groups.router, prefix='/api/v1/groups', tags=['groups'])
 app.include_router(files.router, prefix='/api/v1/files', tags=['files'])
@@ -2500,6 +2543,10 @@ except Exception as e:
         same_site=WEBUI_SESSION_COOKIE_SAME_SITE,
         https_only=WEBUI_SESSION_COOKIE_SECURE,
     )
+
+# This must be added after the global CORS middleware so it can answer the
+# opaque-origin Pyodide preflight before the API-wide origin policy rejects it.
+app.add_middleware(PyodideStaticCORSMiddleware)
 
 
 async def register_client(request, client_id: str) -> bool:

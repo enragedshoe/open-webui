@@ -1,7 +1,12 @@
 import asyncio
 import json
 import logging
+import os
+import re
+import subprocess
 import sys
+import tempfile
+from pathlib import Path
 
 import ftfy
 import requests
@@ -187,6 +192,110 @@ class DoclingLoader:
 
         self.params = params or {}
 
+    def _load_image_only_pdf_ocr(self) -> str:
+        """Return full-page Tesseract text for PDFs with no embedded text."""
+        if self.mime_type != 'application/pdf' or not self.file_path:
+            return ''
+
+        try:
+            max_pages = max(
+                1,
+                min(
+                    int(os.getenv('OPENWEBUI_LOCAL_PDF_OCR_MAX_PAGES', '100')),
+                    500,
+                ),
+            )
+            pdf_info = subprocess.run(
+                ['pdfinfo', self.file_path],
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=120,
+            ).stdout
+            page_match = re.search(r'^Pages:\s+(\d+)\s*$', pdf_info, re.MULTILINE)
+            if not page_match:
+                raise ValueError('pdfinfo did not report a page count')
+            page_count = min(int(page_match.group(1)), max_pages)
+
+            ocr_page_numbers = []
+            for page_number in range(1, page_count + 1):
+                embedded = subprocess.run(
+                    [
+                        'pdftotext',
+                        '-f',
+                        str(page_number),
+                        '-l',
+                        str(page_number),
+                        self.file_path,
+                        '-',
+                    ],
+                    check=True,
+                    capture_output=True,
+                    text=True,
+                    timeout=120,
+                ).stdout
+                if len(''.join(embedded.split())) < 40:
+                    ocr_page_numbers.append(page_number)
+
+            if not ocr_page_numbers:
+                return ''
+
+            with tempfile.TemporaryDirectory(prefix='openwebui-pdf-ocr-') as temp_dir:
+                pages = []
+                for page_number in ocr_page_numbers:
+                    prefix = str(Path(temp_dir) / f'page-{page_number}')
+                    subprocess.run(
+                        [
+                            'pdftoppm',
+                            '-f',
+                            str(page_number),
+                            '-l',
+                            str(page_number),
+                            '-singlefile',
+                            '-r',
+                            '200',
+                            '-gray',
+                            '-png',
+                            self.file_path,
+                            prefix,
+                        ],
+                        check=True,
+                        capture_output=True,
+                        timeout=1800,
+                    )
+                    page_path = Path(f'{prefix}.png')
+                    result = subprocess.run(
+                        [
+                            'tesseract',
+                            str(page_path),
+                            'stdout',
+                            '-l',
+                            'eng',
+                            '--psm',
+                            '3',
+                        ],
+                        check=True,
+                        capture_output=True,
+                        text=True,
+                        timeout=180,
+                    )
+                    page_text = result.stdout.strip()
+                    if page_text:
+                        pages.append(f'### OCR page {page_number}\n\n{page_text}')
+
+            text = '\f'.join(pages).strip()
+            if text:
+                log.info(
+                    'Full-page OCR fallback extracted %s characters from %s of %s page(s)',
+                    len(text),
+                    len(pages),
+                    page_count,
+                )
+            return text
+        except (OSError, ValueError, subprocess.SubprocessError) as exc:
+            log.warning('Full-page OCR fallback unavailable: %s', exc)
+            return ''
+
     def load(self) -> list[Document]:
         page_break_marker = '\f'
         with open(self.file_path, 'rb') as f:
@@ -218,6 +327,12 @@ class DoclingLoader:
             result = r.json()
             document_data = result.get('document', {})
             md_content = document_data.get('md_content', '')
+            full_page_ocr = self._load_image_only_pdf_ocr()
+            if full_page_ocr:
+                structured = md_content.strip()
+                md_content = f'## Full-page OCR text\n\n{full_page_ocr}'
+                if structured and structured != '<No text content found>':
+                    md_content += f'\n\n## Structured layout extraction\n\n{structured}'
             text = md_content or '<No text content found>'
 
             metadata = {'Content-Type': self.mime_type} if self.mime_type else {}

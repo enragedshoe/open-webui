@@ -11,7 +11,7 @@
 	import Tooltip from './Tooltip.svelte';
 	import XMark from '$lib/components/icons/XMark.svelte';
 
-	const i18n = getContext('i18n');
+	const i18n: any = getContext('i18n');
 	const dispatch = createEventDispatcher();
 
 	export let className = 'w-60';
@@ -36,6 +36,7 @@
 	import PageEdit from '../icons/PageEdit.svelte';
 	import ChatBubble from '../icons/ChatBubble.svelte';
 	import Folder from '../icons/Folder.svelte';
+	import BookOpen from '../icons/BookOpen.svelte';
 	let showModal = false;
 
 	const decodeString = (str: string) => {
@@ -44,6 +45,16 @@
 		} catch (e) {
 			return str;
 		}
+	};
+
+	const getTypeLabel = (fileType: string) => {
+		if (fileType === 'collection') return $i18n.t('Collection');
+		if (fileType === 'note') return $i18n.t('Note');
+		if (fileType === 'chat') return $i18n.t('Chat');
+		if (fileType === 'reference_capsule') return $i18n.t('Reference');
+		if (fileType === 'file') return $i18n.t('File');
+		if (fileType === 'folder') return $i18n.t('Folder');
+		return $i18n.t('Document');
 	};
 </script>
 
@@ -104,24 +115,15 @@
 	{:else}
 		<div class="pl-1.5">
 			{#if !loading}
-				<Tooltip
-					content={type === 'collection'
-						? $i18n.t('Collection')
-						: type === 'note'
-							? $i18n.t('Note')
-							: type === 'chat'
-								? $i18n.t('Chat')
-								: type === 'file'
-									? $i18n.t('File')
-									: $i18n.t('Document')}
-					placement="top"
-				>
+				<Tooltip content={getTypeLabel(type)} placement="top">
 					{#if type === 'collection'}
 						<Database />
 					{:else if type === 'note'}
 						<PageEdit />
 					{:else if type === 'chat'}
 						<ChatBubble />
+					{:else if type === 'reference_capsule'}
+						<BookOpen />
 					{:else if type === 'folder'}
 						<Folder />
 					{:else}
@@ -153,6 +155,8 @@
 					{$i18n.t('Document')}
 				{:else if type === 'collection'}
 					{$i18n.t('Collection')}
+				{:else if type === 'reference_capsule'}
+					{$i18n.t('Reference')}
 				{:else}
 					<span class=" capitalize line-clamp-1">{type}</span>
 				{/if}
@@ -169,7 +173,7 @@
 					{#if size}
 						<div class="text-gray-500 text-xs capitalize shrink-0">{formatFileSize(size)}</div>
 					{:else}
-						<div class="text-gray-500 text-xs capitalize shrink-0">{type}</div>
+						<div class="text-gray-500 text-xs capitalize shrink-0">{getTypeLabel(type)}</div>
 					{/if}
 				</div>
 			</div>

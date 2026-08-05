@@ -1,5 +1,8 @@
 import { WEBUI_API_BASE_URL } from '$lib/constants';
-import { getUserPosition } from '$lib/utils';
+import { getUserPositionDetails, type UserPositionDetails } from '$lib/utils';
+
+const USER_LOCATION_CACHE_MS = 10 * 60 * 1000;
+let cachedUserLocation: { context: string; refreshedAt: number } | null = null;
 
 export const getUserGroups = async (token: string) => {
 	let error = null;
@@ -496,19 +499,61 @@ export const updateUserVariables = async (token: string, variables: Record<strin
 	return res;
 };
 
-export const getAndUpdateUserLocation = async (token: string) => {
-	const location = await getUserPosition().catch((err) => {
-		console.error(err);
-		return null;
-	});
+export const updateUserLocation = async (token: string, position: UserPositionDetails) => {
+	let error = null;
 
-	if (location) {
-		await updateUserInfo(token, { location: location });
-		return location;
-	} else {
-		console.info('Failed to get user location');
-		return null;
+	const res = await fetch(`${WEBUI_API_BASE_URL}/users/user/location/update`, {
+		method: 'POST',
+		headers: {
+			'Content-Type': 'application/json',
+			Authorization: `Bearer ${token}`
+		},
+		body: JSON.stringify({
+			latitude: position.latitude,
+			longitude: position.longitude,
+			accuracy: position.accuracy,
+			captured_at: position.capturedAt,
+			timezone: position.timezone
+		})
+	})
+		.then(async (res) => {
+			if (!res.ok) throw await res.json();
+			return res.json();
+		})
+		.catch((err) => {
+			error = err?.detail ?? err?.message ?? 'Failed to update user location.';
+			return null;
+		});
+
+	if (error) {
+		throw new Error(String(error));
 	}
+
+	return res;
+};
+
+export const getAndUpdateUserLocation = async (
+	token: string,
+	options: { force?: boolean; maximumAgeMs?: number } = {}
+) => {
+	const maximumAgeMs = options.maximumAgeMs ?? USER_LOCATION_CACHE_MS;
+	if (
+		!options.force &&
+		cachedUserLocation &&
+		Date.now() - cachedUserLocation.refreshedAt < maximumAgeMs
+	) {
+		return cachedUserLocation.context;
+	}
+
+	const position = await getUserPositionDetails({
+		maximumAge: options.force ? 0 : maximumAgeMs
+	});
+	const location = await updateUserLocation(token, position);
+	cachedUserLocation = {
+		context: location.location_context,
+		refreshedAt: Date.now()
+	};
+	return cachedUserLocation.context;
 };
 
 export const getUserActiveStatusById = async (token: string, userId: string) => {

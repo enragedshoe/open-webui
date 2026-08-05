@@ -20,6 +20,7 @@
 	import { goto } from '$app/navigation';
 
 	import ShareChatModal from '../chat/ShareChatModal.svelte';
+	import ReferenceCapsuleModal from '../chat/ReferenceCapsuleModal.svelte';
 	import Tooltip from '../common/Tooltip.svelte';
 	import Menu from '$lib/components/layout/Navbar/Menu.svelte';
 	import AdjustmentsHorizontal from '../icons/AdjustmentsHorizontal.svelte';
@@ -64,10 +65,16 @@
 	};
 
 	let showShareChatModal = false;
+	let showReferenceCapsuleModal = false;
 	let showDownloadChatModal = false;
 </script>
 
 <ShareChatModal bind:show={showShareChatModal} chatId={$chatId} />
+<ReferenceCapsuleModal
+	bind:show={showReferenceCapsuleModal}
+	chatId={chat?.id ?? ''}
+	modelId={chat?.chat?.models?.[0] ?? ''}
+/>
 
 <button
 	id="new-chat-button"
@@ -131,6 +138,9 @@
 									{scrollToTop}
 									shareHandler={() => {
 										showShareChatModal = !showShareChatModal;
+									}}
+									referenceCapsuleHandler={() => {
+										showReferenceCapsuleModal = true;
 									}}
 									archiveChatHandler={() => {
 										archiveChatHandler(chat.id);

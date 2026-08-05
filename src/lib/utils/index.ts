@@ -789,21 +789,42 @@ export const getImportOrigin = (_chats) => {
 	return 'webui';
 };
 
-export const getUserPosition = async (raw = false) => {
-	// Get the user's location using the Geolocation API
-	const position = await new Promise((resolve, reject) => {
-		navigator.geolocation.getCurrentPosition(resolve, reject);
-	}).catch((error) => {
-		console.error('Error getting user location:', error);
-		throw error;
-	});
+export type UserPositionDetails = {
+	latitude: number;
+	longitude: number;
+	accuracy: number | null;
+	capturedAt: string;
+	timezone: string;
+};
 
-	if (!position) {
-		return 'Location not available';
+export const getUserPositionDetails = async (
+	options: PositionOptions = {}
+): Promise<UserPositionDetails> => {
+	if (!navigator.geolocation) {
+		throw new Error('Location is not supported by this browser.');
 	}
 
-	// Extract the latitude and longitude from the position
-	const { latitude, longitude } = position.coords;
+	const position = await new Promise<GeolocationPosition>((resolve, reject) => {
+		navigator.geolocation.getCurrentPosition(resolve, reject, {
+			enableHighAccuracy: false,
+			timeout: 15_000,
+			maximumAge: 10 * 60 * 1000,
+			...options
+		});
+	});
+
+	return {
+		latitude: position.coords.latitude,
+		longitude: position.coords.longitude,
+		accuracy: Number.isFinite(position.coords.accuracy) ? position.coords.accuracy : null,
+		capturedAt: new Date(position.timestamp).toISOString(),
+		timezone: Intl.DateTimeFormat().resolvedOptions().timeZone || ''
+	};
+};
+
+export const getUserPosition = async (raw = false) => {
+	const position = await getUserPositionDetails();
+	const { latitude, longitude } = position;
 
 	if (raw) {
 		return { latitude, longitude };

@@ -1,6 +1,7 @@
 <script lang="ts">
 	import { getContext, onMount, tick } from 'svelte';
 	import { fly } from 'svelte/transition';
+	import { toast } from 'svelte-sonner';
 
 	import { config, user, tools as _tools, mobile, knowledge } from '$lib/stores';
 	import { getKnowledgeBases } from '$lib/apis/knowledge';
@@ -28,8 +29,10 @@
 	import Knowledge from './InputMenu/Knowledge.svelte';
 	import AttachWebpageModal from './AttachWebpageModal.svelte';
 	import GlobeAlt from '$lib/components/icons/GlobeAlt.svelte';
+	import BookOpen from '$lib/components/icons/BookOpen.svelte';
+	import ReferenceCapsules from './InputMenu/ReferenceCapsules.svelte';
 
-	const i18n = getContext('i18n');
+	const i18n: any = getContext('i18n');
 
 	export let files = [];
 
@@ -59,8 +62,8 @@
 	let webUploadEnabled = true;
 	$: webUploadEnabled = $user?.role === 'admin' || ($user?.permissions?.chat?.web_upload ?? true);
 
-	$: if (!fileUploadEnabled && files.length > 0) {
-		files = [];
+	$: if (!fileUploadEnabled && files.some((file) => file.type !== 'reference_capsule')) {
+		files = files.filter((file) => file.type === 'reference_capsule');
 	}
 
 	const detectMobile = () => {
@@ -78,6 +81,13 @@
 
 	const onSelect = (item) => {
 		if (files.find((f) => f.id === item.id)) {
+			return;
+		}
+		if (
+			item.type === 'reference_capsule' &&
+			files.filter((file) => file.type === 'reference_capsule').length >= 5
+		) {
+			toast.error($i18n.t('Select no more than 5 references at a time'));
 			return;
 		}
 		files = [
@@ -129,6 +139,28 @@
 					class="max-h-72 overflow-y-auto overflow-x-hidden scrollbar-thin"
 					in:fly={{ x: -20, duration: 150 }}
 				>
+					<Tooltip
+						content={$i18n.t(
+							'Saved references are reviewed summaries and are used only for the message where you select them.'
+						)}
+						className="w-full"
+					>
+						<button
+							data-testid="open-reference-capsules-button"
+							class="flex h-[1.6875rem] w-full cursor-pointer items-center gap-2 rounded-xl px-2 text-[13px] font-normal hover:bg-gray-50/40 dark:hover:bg-gray-800/40"
+							type="button"
+							on:click={() => {
+								tab = 'reference_capsules';
+							}}
+						>
+							<BookOpen />
+							<div class="flex w-full items-center justify-between">
+								<div class="line-clamp-1">{$i18n.t('References')}</div>
+								<div class="text-gray-500"><ChevronRight /></div>
+							</div>
+						</button>
+					</Tooltip>
+
 					<Tooltip
 						content={fileUploadCapableModels.length !== selectedModels.length
 							? $i18n.t('Model(s) do not support file upload')
@@ -325,7 +357,7 @@
 
 							<div class="flex items-center w-full justify-between">
 								<div class=" line-clamp-1">
-									{$i18n.t('Reference Chats')}
+									{$i18n.t('Attach Full Chat')}
 								</div>
 
 								<div class="text-gray-500">
@@ -487,6 +519,23 @@
 						{/if}
 					{/if}
 				</div>
+			{:else if tab === 'reference_capsules'}
+				<div class="flex max-h-72 flex-col overflow-hidden" in:fly={{ x: 20, duration: 150 }}>
+					<button
+						class="flex h-[1.6875rem] w-full shrink-0 cursor-pointer items-center justify-between gap-2 rounded-xl px-2 text-[13px] font-normal hover:bg-gray-50/40 dark:hover:bg-gray-800/40"
+						type="button"
+						on:click={() => {
+							tab = '';
+						}}
+					>
+						<ChevronLeft />
+						<div class="flex w-full items-center justify-between">
+							<div>{$i18n.t('References')}</div>
+						</div>
+					</button>
+
+					<ReferenceCapsules {onSelect} />
+				</div>
 			{:else if tab === 'knowledge'}
 				<div class="flex max-h-72 flex-col overflow-hidden" in:fly={{ x: 20, duration: 150 }}>
 					<button
@@ -556,7 +605,7 @@
 
 						<div class="flex items-center w-full justify-between">
 							<div>
-								{$i18n.t('Chats')}
+								{$i18n.t('Full Chats')}
 							</div>
 						</div>
 					</button>

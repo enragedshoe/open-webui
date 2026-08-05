@@ -3,8 +3,7 @@
 	import { createEventDispatcher, onMount, onDestroy, getContext } from 'svelte';
 	import { toast } from 'svelte-sonner';
 	import Tooltip from '$lib/components/common/Tooltip.svelte';
-	import { updateUserInfo } from '$lib/apis/users';
-	import { getUserPosition } from '$lib/utils';
+	import { getAndUpdateUserLocation } from '$lib/apis/users';
 	import { setTextScale } from '$lib/utils/text-scale';
 
 	import Minus from '$lib/components/icons/Minus.svelte';
@@ -123,20 +122,21 @@
 
 	const toggleUserLocation = async () => {
 		if (userLocation) {
-			const position = await getUserPosition().catch((error) => {
-				toast.error(error.message);
-				return null;
-			});
+			const location = await getAndUpdateUserLocation(localStorage.token, { force: true }).catch(
+				(error) => {
+					toast.error(error.message);
+					return null;
+				}
+			);
 
-			if (position) {
-				await updateUserInfo(localStorage.token, { location: position });
+			if (location) {
 				toast.success($i18n.t('User location successfully retrieved.'));
 			} else {
 				userLocation = false;
 			}
 		}
 
-		saveSettings({ userLocation });
+		saveSettings({ userLocation, locationConsentVersion: 1 });
 	};
 
 	const toggleTitleAutoGenerate = async () => {
@@ -493,7 +493,9 @@
 					</div>
 				</div>
 				<p class={settingDescriptionClass}>
-					{$i18n.t('Share your current location with features that can use it.')}
+					{$i18n.t(
+						'Use this device location while the app is open. Only a nearby city or region and update time are saved.'
+					)}
 				</p>
 			</div>
 

@@ -637,8 +637,8 @@ async def get_builtin_tools(
                 ]
             )
 
-    # Chats tools - search and fetch user's chat history
-    if is_builtin_tool_enabled('chats'):
+    # Chat-history tools are opt-in because they can read the user's other conversations.
+    if is_builtin_tool_enabled('chats') and features.get('chat_history'):
         builtin_functions.extend([search_chats, view_chat])
 
     if (

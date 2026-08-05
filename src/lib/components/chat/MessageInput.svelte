@@ -71,6 +71,7 @@
 	import InputMenu from './MessageInput/InputMenu.svelte';
 	import VoiceRecording from './MessageInput/VoiceRecording.svelte';
 	import ModelSelector from './ModelSelector.svelte';
+	import HouseholdModeSelector from './HouseholdModeSelector.svelte';
 
 	import ToolServersModal from './ToolServersModal.svelte';
 	import SkillsModal from './SkillsModal.svelte';
@@ -122,6 +123,7 @@
 	export let chatId = '';
 	export let contextUsage = null;
 	export let contextCompactionEnabled = false;
+	export let showHouseholdModes = true;
 
 	export let autoScroll = false;
 	export let generating = false;
@@ -673,6 +675,7 @@
 
 	let showWebSearchButton = false;
 	$: showWebSearchButton =
+		!showHouseholdModes &&
 		selectedModelIds.length === webSearchCapableModels.length &&
 		$config?.features?.enable_web_search &&
 		($_user.role === 'admin' || $_user?.permissions?.features?.web_search);
@@ -2432,6 +2435,10 @@
 								</div>
 							</div>
 						</div>
+
+						{#if showHouseholdModes}
+							<HouseholdModeSelector bind:webSearchEnabled {onWebSearchToggle} />
+						{/if}
 
 						{#if $config?.license_metadata?.input_footer}
 							<div class=" text-xs text-gray-500 text-center line-clamp-1 marked">

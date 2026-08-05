@@ -46,6 +46,11 @@ from open_webui.models.folders import Folders
 from open_webui.models.models import Models
 from open_webui.models.notes import Notes
 from open_webui.models.oauth_sessions import OAuthSessions
+from open_webui.models.reference_capsules import (
+    MAX_SELECTED_CAPSULES,
+    ReferenceCapsules,
+    render_reference_capsule_context,
+)
 from open_webui.models.users import UserModel, Users
 from open_webui.events import EVENTS, publish_event
 from open_webui.retrieval.utils import get_sources_from_items
@@ -1417,8 +1422,13 @@ async def chat_web_search_handler(request: Request, form_data: dict, extra_param
             request.state.cached_queries = queries
 
     except Exception as e:
-        log.exception(e)
-        queries = [user_message or '']
+        if not await Config.get('task.query.search.enable'):
+            queries = [
+                f'{user_message or ""}\nCurrent date: {time.strftime("%Y-%m-%d", time.gmtime())}'
+            ]
+        else:
+            log.exception(e)
+            queries = [user_message or '']
 
     # Check if generated queries are empty
     if len(queries) == 1 and queries[0].strip() == '':
@@ -1509,6 +1519,14 @@ async def chat_web_search_handler(request: Request, form_data: dict, extra_param
                     },
                 }
             )
+            form_data['messages'] = add_or_update_system_message(
+                'The user enabled web search, but it returned no usable results. '
+                'Say that current information could not be verified. Do not present '
+                'time-sensitive claims as current or sourced; if general knowledge is '
+                'still helpful, label it clearly as potentially outdated.',
+                form_data['messages'],
+                append=True,
+            )
 
     except Exception as e:
         log.exception(e)
@@ -1524,6 +1542,14 @@ async def chat_web_search_handler(request: Request, form_data: dict, extra_param
                     'error': True,
                 },
             }
+        )
+        form_data['messages'] = add_or_update_system_message(
+            'The user enabled web search, but the search failed. Say that current '
+            'information could not be verified. Do not present time-sensitive claims '
+            'as current or sourced; if general knowledge is still helpful, label it '
+            'clearly as potentially outdated.',
+            form_data['messages'],
+            append=True,
         )
 
     return form_data
@@ -2292,6 +2318,23 @@ async def process_chat_payload(request, form_data, user, metadata, model):
     # Guided regeneration: extract before it reaches the LLM provider
     regeneration_prompt = form_data.pop('regeneration_prompt', None)
 
+    # Reference capsules are an explicit, per-request context choice. Remove the
+    # client-only field before filters/providers see it; inject validated,
+    # user-owned capsule text after feature processing below.
+    reference_capsule_ids = form_data.pop('reference_capsule_ids', None) or []
+    if not isinstance(reference_capsule_ids, list) or not all(
+        isinstance(capsule_id, str) and capsule_id for capsule_id in reference_capsule_ids
+    ):
+        raise HTTPException(status_code=400, detail='reference_capsule_ids must be a list of IDs.')
+    reference_capsule_ids = list(dict.fromkeys(reference_capsule_ids))
+    if len(reference_capsule_ids) > MAX_SELECTED_CAPSULES:
+        raise HTTPException(
+            status_code=400,
+            detail=f'Select no more than {MAX_SELECTED_CAPSULES} references at a time.',
+        )
+    if reference_capsule_ids:
+        metadata['reference_capsule_ids'] = reference_capsule_ids
+
     # Load messages from DB when available — DB preserves structured 'output' items
     # which the frontend strips, causing tool calls to be merged into content.
     chat_id = metadata.get('chat_id')
@@ -2594,6 +2637,20 @@ async def process_chat_payload(request, form_data, user, metadata, model):
                         form_data['messages'],
                         append=True,
                     )
+
+    if reference_capsule_ids:
+        capsules = await ReferenceCapsules.get_by_ids_and_user_id(reference_capsule_ids, user.id)
+        if len(capsules) != len(reference_capsule_ids):
+            raise HTTPException(status_code=404, detail='One or more selected references were not found.')
+        try:
+            reference_context = render_reference_capsule_context(capsules)
+        except ValueError as exc:
+            raise HTTPException(status_code=400, detail=str(exc)) from exc
+        form_data['messages'] = add_or_update_system_message(
+            reference_context,
+            form_data['messages'],
+            append=True,
+        )
 
     tool_ids = form_data.pop('tool_ids', None)
     terminal_id = form_data.pop('terminal_id', None)

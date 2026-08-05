@@ -37,6 +37,7 @@
 	import GarbageBin from '$lib/components/icons/GarbageBin.svelte';
 	import Messages from '$lib/components/chat/Messages.svelte';
 	import Download from '$lib/components/icons/Download.svelte';
+	import BookOpen from '$lib/components/icons/BookOpen.svelte';
 
 	const i18n = getContext('i18n');
 
@@ -44,6 +45,7 @@
 	export let readOnly: boolean = false;
 
 	export let shareHandler: Function;
+	export let referenceCapsuleHandler: Function = () => {};
 	export let moveChatHandler: Function;
 
 	export let archiveChatHandler: Function;
@@ -444,6 +446,18 @@
 
 			{#if !readOnly && !$temporaryChatEnabled && chat?.id}
 				<hr class="border-gray-50/30 dark:border-gray-800/30 mx-1 my-0.5" />
+
+				<button
+					draggable="false"
+					class="flex h-[1.6875rem] w-full items-center gap-2 rounded-xl px-2 text-[13px] cursor-pointer select-none hover:bg-gray-50/40 dark:hover:bg-gray-800/40"
+					id="chat-save-reference-button"
+					on:click={() => {
+						referenceCapsuleHandler();
+					}}
+				>
+					<BookOpen className="size-3.5" strokeWidth="1.5" />
+					<div class="flex items-center">{$i18n.t('Save as Reference')}</div>
+				</button>
 
 				{#if $folders.length > 0}
 					<DropdownSub contentClass="select-none z-50" maxWidth={200}>

@@ -1,11 +1,23 @@
 from __future__ import annotations
 
 import logging
+import re
 
 import requests
 from open_webui.retrieval.web.main import SearchResult, get_filtered_results
 
 log = logging.getLogger(__name__)
+
+
+def _requested_domains(query: str) -> list[str]:
+    """Treat hostnames in a generated query as explicit source preferences."""
+    domains = re.findall(
+        r'(?<![\w@])(?:https?://)?(?:www\.)?'
+        r'([a-z0-9](?:[a-z0-9-]*[a-z0-9])?(?:\.[a-z0-9-]+)*\.[a-z]{2,})',
+        query,
+        flags=re.IGNORECASE,
+    )
+    return list(dict.fromkeys(domain.lower() for domain in domains))[:5]
 
 
 def search_tavily(
@@ -30,7 +42,14 @@ def search_tavily(
         'Content-Type': 'application/json',
         'Authorization': f'Bearer {api_key}',
     }
-    data = {'query': query, 'max_results': count}
+    data = {
+        'query': query,
+        'max_results': count,
+        'search_depth': 'advanced',
+    }
+    requested_domains = _requested_domains(query)
+    if requested_domains:
+        data['include_domains'] = requested_domains
     response = requests.post(url, headers=headers, json=data)
     response.raise_for_status()
 
