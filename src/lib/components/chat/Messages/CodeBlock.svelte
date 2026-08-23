@@ -409,13 +409,25 @@
 		if (attributes?.output) {
 			try {
 				const output = JSON.parse(unescapeHtml(attributes.output));
-				stdout = output.stdout;
+				files = null;
+				stdout = restoreOutputImages(output.stdout);
 				stderr = output.stderr;
-				result = output.result;
+				result = restoreOutputImages(output.result);
 			} catch (error) {
 				console.error('Error:', error);
 			}
 		}
+	};
+
+	const restoreOutputImages = (value) => {
+		if (typeof value !== 'string') return value;
+		const restored = [];
+		const text = value.replace(/!\[Output Image\]\(([^)]+)\)/g, (_match, url) => {
+			restored.push({ type: 'image/png', data: url });
+			return '';
+		});
+		if (restored.length) files = [...(files ?? []), ...restored];
+		return text.trim();
 	};
 
 	onMount(async () => {

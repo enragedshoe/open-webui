@@ -98,6 +98,7 @@
 									<Markdown
 										id={`${id}-${displayItem.id}-${detailIndex}-detail`}
 										content={detailToken.text}
+										attributes={getDetailAttributes(detailToken)}
 										{done}
 										{preview}
 										{compactPreview}
@@ -145,6 +146,7 @@
 						<Markdown
 							id={`${id}-${displayItem.id}-detail`}
 							content={detailToken.text}
+							attributes={getDetailAttributes(detailToken)}
 							{done}
 							{preview}
 							{compactPreview}

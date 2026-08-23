@@ -44,6 +44,30 @@
 		}
 	};
 
+	const modelInfoTooltip = (model, fallbackName: string) => {
+		const meta = model?.info?.meta ?? {};
+		const technicalName = meta?.model_name ?? fallbackName;
+		const switchSeconds = Number(meta?.switch_estimate_seconds);
+		const capabilityLabels = Array.isArray(meta?.capability_labels)
+			? meta.capability_labels.filter((label) => typeof label === 'string' && label.trim())
+			: [];
+
+		if (meta?.model_name || Number.isFinite(switchSeconds) || capabilityLabels.length > 0) {
+			const heading = Number.isFinite(switchSeconds)
+				? `**${technicalName}** · About ${Math.round(switchSeconds)} seconds to switch`
+				: `**${technicalName}**`;
+			const lines = [heading];
+			if (capabilityLabels.length > 0) {
+				lines.push('', '**Capabilities**', ...capabilityLabels.map((label) => `- ${label}`));
+			}
+			return `${marked.parse(sanitizeResponseContent(lines.join('\n')))}`;
+		}
+
+		return `${marked.parse(
+			sanitizeResponseContent(meta?.description ?? '').replaceAll('\n', '<br>')
+		)}`;
+	};
+
 	let showMenu = false;
 	$: isSelected = compareEnabled ? selectedValues.includes(item.value) : value === item.value;
 </script>
@@ -212,13 +236,14 @@
 					</Tooltip>
 				{/if}
 
-				{#if item.model?.info?.meta?.description}
+				{#if item.model?.info?.meta?.description || item.model?.info?.meta?.model_name}
 					<Tooltip
-						content={`${marked.parse(
-							sanitizeResponseContent(item.model?.info?.meta?.description).replaceAll('\n', '<br>')
-						)}`}
+						content={modelInfoTooltip(item.model, item.label)}
 					>
-						<div class=" translate-y-[1px]">
+						<div
+							class=" translate-y-[1px]"
+							aria-label={$i18n.t('About {{modelName}}', { modelName: item.label })}
+						>
 							<svg
 								xmlns="http://www.w3.org/2000/svg"
 								fill="none"

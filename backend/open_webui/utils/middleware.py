@@ -2570,6 +2570,8 @@ async def process_chat_payload(request, form_data, user, metadata, model):
 
     features = form_data.pop('features', None) or {}
     extra_params['__features__'] = features
+    validated_function_features = {}
+    request.state.validated_function_features = validated_function_features
     if features:
         if 'voice' in features and features['voice']:
             if await Config.get('task.voice.prompt.enable'):
@@ -2587,13 +2589,47 @@ async def process_chat_payload(request, form_data, user, metadata, model):
 
         if 'web_search' in features and features['web_search']:
             # features is client-supplied; re-check the permission the native FC path enforces.
-            if getattr(user, 'role', None) == 'admin' or await has_permission(
-                getattr(user, 'id', ''),
-                'features.web_search',
-                await Config.get('user.permissions'),
-            ):
+            model_meta = model.get('info', {}).get('meta', {})
+            # Pi owns its web tools.  Its preset intentionally disables the
+            # similarly named Open WebUI builtin so the model cannot receive
+            # two competing search implementations.  That suppression bit is
+            # therefore not a denial of the independently validated feature
+            # handoff to these two function pipes.
+            pi_feature_pipe = (
+                model.get('id')
+                in {
+                    'external-chat',
+                    'external-chat-pi',
+                    'external-operator-pi',
+                    'localai_pi',
+                    'localai_pi_operator',
+                }
+                or model.get('info', {}).get('base_model_id')
+                in {'localai_pi', 'localai_pi_operator'}
+            )
+            web_search_allowed = (
+                (
+                    pi_feature_pipe
+                    or (model_meta.get('builtinTools') or {}).get('web_search', True)
+                )
+                and (model_meta.get('capabilities') or {}).get('web_search', True)
+                and await Config.get('web.search.enable')
+                and (
+                    getattr(user, 'role', None) == 'admin'
+                    or await has_permission(
+                        getattr(user, 'id', ''),
+                        'features.web_search',
+                        await Config.get('user.permissions'),
+                    )
+                )
+            )
+            if web_search_allowed:
+                validated_function_features['web_search'] = True
                 # Skip forced RAG web search when native FC is enabled - model can use web_search tool
-                if metadata.get('params', {}).get('function_calling') == 'legacy':
+                if (
+                    metadata.get('params', {}).get('function_calling') == 'legacy'
+                    and not pi_feature_pipe
+                ):
                     form_data = await chat_web_search_handler(request, form_data, extra_params, user)
 
         if 'image_generation' in features and features['image_generation']:
@@ -2608,35 +2644,51 @@ async def process_chat_payload(request, form_data, user, metadata, model):
                     form_data = await chat_image_generation_handler(request, form_data, extra_params, user)
 
         if 'code_interpreter' in features and features['code_interpreter']:
-            engine = await Config.get('code_interpreter.engine', 'pyodide')
-
-            # Skip XML-tag prompt injection when native FC is enabled —
-            # execute_code will be injected as a builtin tool instead
-            if metadata.get('params', {}).get('function_calling') == 'legacy':
-                ci_prompt_template = await Config.get('code_interpreter.prompt_template')
-                prompt = ci_prompt_template if ci_prompt_template != '' else DEFAULT_CODE_INTERPRETER_PROMPT
-
-                # Append filesystem awareness only for pyodide engine
-                if engine != 'jupyter':
-                    prompt += CODE_INTERPRETER_PYODIDE_PROMPT
-
-                form_data['messages'] = add_or_update_user_message(
-                    prompt,
-                    form_data['messages'],
-                )
-            else:
-                # Native FC: tool docstring can't be dynamic, so inject
-                # filesystem context into the system message for pyodide
-                # engine.  Appending to the system prompt (instead of the
-                # user message) keeps it in the stable cached prefix so
-                # providers with prefix caching don't re-bill the full
-                # conversation on every turn.
-                if engine != 'jupyter':
-                    form_data['messages'] = add_or_update_system_message(
-                        CODE_INTERPRETER_PYODIDE_PROMPT,
-                        form_data['messages'],
-                        append=True,
+            model_meta = model.get('info', {}).get('meta', {})
+            code_interpreter_allowed = (
+                (model_meta.get('builtinTools') or {}).get('code_interpreter', True)
+                and (model_meta.get('capabilities') or {}).get('code_interpreter', True)
+                and await Config.get('code_interpreter.enable')
+                and (
+                    getattr(user, 'role', None) == 'admin'
+                    or await has_permission(
+                        getattr(user, 'id', ''),
+                        'features.code_interpreter',
+                        await Config.get('user.permissions'),
                     )
+                )
+            )
+            if code_interpreter_allowed:
+                validated_function_features['code_interpreter'] = True
+                engine = await Config.get('code_interpreter.engine', 'pyodide')
+
+                # Skip XML-tag prompt injection when native FC is enabled —
+                # execute_code will be injected as a builtin tool instead
+                if metadata.get('params', {}).get('function_calling') == 'legacy':
+                    ci_prompt_template = await Config.get('code_interpreter.prompt_template')
+                    prompt = ci_prompt_template if ci_prompt_template != '' else DEFAULT_CODE_INTERPRETER_PROMPT
+
+                    # Append filesystem awareness only for pyodide engine
+                    if engine != 'jupyter':
+                        prompt += CODE_INTERPRETER_PYODIDE_PROMPT
+
+                    form_data['messages'] = add_or_update_user_message(
+                        prompt,
+                        form_data['messages'],
+                    )
+                else:
+                    # Native FC: tool docstring can't be dynamic, so inject
+                    # filesystem context into the system message for pyodide
+                    # engine.  Appending to the system prompt (instead of the
+                    # user message) keeps it in the stable cached prefix so
+                    # providers with prefix caching don't re-bill the full
+                    # conversation on every turn.
+                    if engine != 'jupyter':
+                        form_data['messages'] = add_or_update_system_message(
+                            CODE_INTERPRETER_PYODIDE_PROMPT,
+                            form_data['messages'],
+                            append=True,
+                        )
 
     if reference_capsule_ids:
         capsules = await ReferenceCapsules.get_by_ids_and_user_id(reference_capsule_ids, user.id)

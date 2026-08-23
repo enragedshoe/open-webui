@@ -49,6 +49,7 @@
 	export let allowEmbeds = true;
 
 	export let sourceIds = [];
+	export let attributes = {};
 
 	export let onSave = () => {};
 	export let onUpdate = () => {};
@@ -107,6 +108,7 @@
 		{compactPreview}
 		{paragraphTag}
 		{editCodeBlock}
+		{attributes}
 		{sourceIds}
 		{topPadding}
 		{allowEmbeds}

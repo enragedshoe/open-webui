@@ -272,6 +272,7 @@ async def generate_function_chat_completion(request, form_data, user, models: di
         '__metadata__': metadata,
         '__oauth_token__': oauth_token,
         '__request__': request,
+        '__features__': getattr(request.state, 'validated_function_features', {}),
     }
     extra_params['__tools__'] = metadata.get('tools', {})
 
