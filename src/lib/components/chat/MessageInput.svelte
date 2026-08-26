@@ -72,6 +72,10 @@
 	import VoiceRecording from './MessageInput/VoiceRecording.svelte';
 	import ModelSelector from './ModelSelector.svelte';
 	import HouseholdModeSelector from './HouseholdModeSelector.svelte';
+	import {
+		modelAllowsHouseholdCodeInterpreter,
+		modelAllowsHouseholdWebSearch
+	} from './householdFeatures';
 
 	import ToolServersModal from './ToolServersModal.svelte';
 	import SkillsModal from './SkillsModal.svelte';
@@ -635,10 +639,8 @@
 	);
 
 	let webSearchCapableModels = [];
-	$: webSearchCapableModels = getCapableModelIds(
-		selectedModelIds,
-		'web_search',
-		modelCapabilitiesById
+	$: webSearchCapableModels = selectedModelIds.filter((modelId) =>
+		modelAllowsHouseholdWebSearch($models.find((model) => model.id === modelId))
 	);
 
 	let imageGenerationCapableModels = [];
@@ -649,10 +651,8 @@
 	);
 
 	let codeInterpreterCapableModels = [];
-	$: codeInterpreterCapableModels = getCapableModelIds(
-		selectedModelIds,
-		'code_interpreter',
-		modelCapabilitiesById
+	$: codeInterpreterCapableModels = selectedModelIds.filter((modelId) =>
+		modelAllowsHouseholdCodeInterpreter($models.find((model) => model.id === modelId))
 	);
 
 	let terminalCapableModels = [];
@@ -674,11 +674,13 @@
 	$: showSkillsButton = ($skills ?? []).some((skill) => skill.is_active);
 
 	let showWebSearchButton = false;
-	$: showWebSearchButton =
-		!showHouseholdModes &&
+	let householdWebSearchAvailable = false;
+	$: householdWebSearchAvailable =
+		selectedModelIds.length > 0 &&
 		selectedModelIds.length === webSearchCapableModels.length &&
 		$config?.features?.enable_web_search &&
 		($_user.role === 'admin' || $_user?.permissions?.features?.web_search);
+	$: showWebSearchButton = !showHouseholdModes && householdWebSearchAvailable;
 
 	let showImageGenerationButton = false;
 	$: showImageGenerationButton =
@@ -689,6 +691,7 @@
 	let showCodeInterpreterButton = false;
 	$: showCodeInterpreterButton =
 		!$selectedTerminalId &&
+		selectedModelIds.length > 0 &&
 		selectedModelIds.length === codeInterpreterCapableModels.length &&
 		$config?.features?.enable_code_interpreter &&
 		($_user.role === 'admin' || $_user?.permissions?.features?.code_interpreter);
@@ -2437,7 +2440,11 @@
 						</div>
 
 						{#if showHouseholdModes}
-							<HouseholdModeSelector bind:webSearchEnabled {onWebSearchToggle} />
+							<HouseholdModeSelector
+								bind:webSearchEnabled
+								available={householdWebSearchAvailable}
+								{onWebSearchToggle}
+							/>
 						{/if}
 
 						{#if $config?.license_metadata?.input_footer}

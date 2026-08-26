@@ -1437,12 +1437,28 @@ async def get_sources_from_items(
                     }
 
         elif item.get('type') == 'url':
-            content, docs = await get_content_from_url(request, item.get('url'))
-            if docs:
-                query_result = {
-                    'documents': [[content]],
-                    'metadatas': [[{'url': item.get('url'), 'name': item.get('url')}]],
-                }
+            try:
+                content, docs = await get_content_from_url(request, item.get('url'))
+                if docs:
+                    query_result = {
+                        'documents': [[content]],
+                        'metadatas': [
+                            [
+                                {
+                                    'url': item.get('url'),
+                                    'name': item.get('url'),
+                                    'source': item.get('url'),
+                                }
+                            ]
+                        ],
+                    }
+            except asyncio.CancelledError:
+                raise
+            except Exception as exc:
+                # One invalid or unavailable explicit URL must not discard other
+                # search sources already collected for the same request.
+                log.warning('Skipping unavailable explicit web URL %s: %s', item.get('url'), exc)
+                continue
         elif item.get('type') == 'file':
             if item.get('context') == 'full' or bypass_embedding_and_retrieval:
                 if item.get('file', {}).get('data', {}).get('content', ''):

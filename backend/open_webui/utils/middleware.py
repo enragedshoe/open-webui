@@ -99,6 +99,14 @@ from open_webui.utils.filter import (
     get_filter_functions,
     process_filter_functions,
 )
+from open_webui.utils.finish_reason import (
+    finalize_output_statuses,
+    finish_reason_after_stream,
+    is_incomplete_finish_reason,
+    is_responses_terminal_event,
+    non_streaming_finish_reason,
+    update_finish_reason,
+)
 
 from open_webui.utils.json_codec import JSONCodec
 from open_webui.utils.mcp.client import MCPClient
@@ -2804,13 +2812,20 @@ async def process_chat_payload(request, form_data, user, metadata, model):
         if fallback:
             set_last_user_message_content(fallback, form_data['messages'])
             prompt = fallback
-    # TODO: re-enable URL extraction from prompt
-    # urls = []
-    # if prompt and len(prompt or "") < 500 and (not files or len(files) == 0):
-    #     urls = extract_urls(prompt)
 
-    if files:
-        # files = [*files, *[{"type": "url", "url": url, "name": url} for url in urls]]
+    # When the user explicitly opted into web search, retain exact URLs as URL
+    # sources in addition to search-engine results. The URL item is fetched later
+    # by get_sources_from_items through get_content_from_url's SSRF-safe loader.
+    urls = []
+    if validated_function_features.get('web_search') and prompt and len(prompt) < 500:
+        urls = list(dict.fromkeys(extract_urls(prompt)))[:5]
+
+    if files or urls:
+        existing_urls = {item.get('url') for item in (files or []) if isinstance(item, dict) and item.get('url')}
+        files = [
+            *(files or []),
+            *[{'type': 'url', 'url': url, 'name': url, 'context': 'full'} for url in urls if url not in existing_urls],
+        ]
         # Remove duplicate files based on their content
         files = list({json.dumps(f, sort_keys=True): f for f in files}.values())
 
@@ -3729,9 +3744,10 @@ async def non_streaming_chat_response_handler(response, ctx):
             choices = response_data.get('choices', [])
             response_output = response_data.get('output')
             content = choices[0].get('message', {}).get('content') if choices else ''
+            finish_reason = non_streaming_finish_reason(response_data)
 
-            if choices and (content or response_output):
-                if content or response_output:
+            if choices and (content or response_output or is_incomplete_finish_reason(finish_reason)):
+                if content or response_output or is_incomplete_finish_reason(finish_reason):
                     await event_emitter(
                         {
                             'type': 'chat:completion',
@@ -3776,6 +3792,8 @@ async def non_streaming_chat_response_handler(response, ctx):
                             }
                         )
 
+                    response_output = finalize_output_statuses(response_output, finish_reason)
+
                     await event_emitter(
                         {
                             'type': 'chat:completion',
@@ -3783,6 +3801,7 @@ async def non_streaming_chat_response_handler(response, ctx):
                                 'done': True,
                                 'output': response_output,
                                 'title': title,
+                                **({'finish_reason': finish_reason} if finish_reason else {}),
                             },
                         }
                     )
@@ -3798,6 +3817,7 @@ async def non_streaming_chat_response_handler(response, ctx):
                                 'done': True,
                                 'role': 'assistant',
                                 'output': response_output,
+                                **({'finishReason': finish_reason} if finish_reason else {}),
                                 **({'usage': usage} if usage else {}),
                             },
                         )
@@ -3807,6 +3827,7 @@ async def non_streaming_chat_response_handler(response, ctx):
                     ctx['assistant_message'] = {
                         'content': content,
                         'output': response_output,
+                        **({'finish_reason': finish_reason} if finish_reason else {}),
                         **({'usage': usage} if usage else {}),
                     }
                     await outlet_filter_handler(ctx)
@@ -4199,6 +4220,7 @@ async def streaming_chat_response_handler(response, ctx):
             usage = None
             prior_output = []
             last_response_id = None
+            finish_reason = None
 
             def full_output():
                 return prior_output + output if prior_output else output
@@ -4282,8 +4304,26 @@ async def streaming_chat_response_handler(response, ctx):
                     nonlocal output
                     nonlocal prior_output
                     nonlocal last_response_id
+                    nonlocal finish_reason
 
                     response_tool_calls = []
+                    stream_finish_reason = None
+                    done_sentinel_seen = False
+                    responses_terminal_event_seen = False
+                    malformed_sse_event_seen = False
+                    intentionally_stopped = False
+                    stream_iterator_error = None
+
+                    async def body_items():
+                        nonlocal stream_iterator_error
+                        try:
+                            async for item in response.body_iterator:
+                                yield item
+                        except asyncio.CancelledError:
+                            raise
+                        except Exception as exc:
+                            stream_iterator_error = exc
+                            log.warning('Upstream response stream disconnected before completion: %s', exc)
 
                     delta_count = 0
                     delta_chunk_size = max(
@@ -4326,7 +4366,7 @@ async def streaming_chat_response_handler(response, ctx):
 
                     filter_extra_params = {'__body__': form_data, **extra_params} if filter_functions else None
 
-                    async for line in response.body_iterator:
+                    async for line in body_items():
                         line = line.decode('utf-8', 'replace') if isinstance(line, bytes) else line
                         data = line
 
@@ -4362,8 +4402,20 @@ async def streaming_chat_response_handler(response, ctx):
                         # Remove the "data:" prefix
                         data = data[5:].strip()
 
+                        if data == '[DONE]':
+                            done_sentinel_seen = True
+                            continue
+
                         try:
+                            decoded_sse_event = False
                             data = JSONCodec.loads(data)
+                            if not isinstance(data, dict):
+                                raise ValueError('SSE data event must be a JSON object')
+                            decoded_sse_event = True
+                            stream_finish_reason = update_finish_reason(stream_finish_reason, data)
+                            responses_terminal_event_seen = (
+                                responses_terminal_event_seen or is_responses_terminal_event(data)
+                            )
 
                             if filter_functions:
                                 data, _ = await process_filter_functions(
@@ -4887,6 +4939,7 @@ async def streaming_chat_response_handler(response, ctx):
                                             )
 
                                             if end:
+                                                intentionally_stopped = True
                                                 break
 
                                         if ENABLE_REALTIME_CHAT_SAVE and save_to_chat:
@@ -4921,6 +4974,8 @@ async def streaming_chat_response_handler(response, ctx):
                         except (asyncio.CancelledError, KeyboardInterrupt):
                             raise
                         except Exception as e:
+                            if not decoded_sse_event:
+                                malformed_sse_event_seen = True
                             done = 'data: [DONE]' in line
                             if done:
                                 pass
@@ -4928,6 +4983,15 @@ async def streaming_chat_response_handler(response, ctx):
                                 log.debug(f'Error: {e}')
                                 continue
                     await flush_pending_delta_data()
+                    finish_reason = finish_reason_after_stream(
+                        stream_finish_reason,
+                        done_sentinel_seen=done_sentinel_seen,
+                        responses_terminal_event_seen=responses_terminal_event_seen,
+                        intentionally_stopped=intentionally_stopped,
+                        malformed_event_seen=malformed_sse_event_seen,
+                    )
+                    if stream_iterator_error is not None:
+                        await emit_message_error('The upstream response stream disconnected before completing.')
 
                     if output:
                         # Clean up the last message item
@@ -5606,10 +5670,7 @@ async def streaming_chat_response_handler(response, ctx):
                             await emit_message_error(error_content)
                             break
 
-                # Mark all in-progress items as completed
-                for item in output:
-                    if item.get('status') == 'in_progress':
-                        item['status'] = 'completed'
+                output = finalize_output_statuses(output, finish_reason)
 
                 title = await Chats.get_chat_title_by_id(metadata['chat_id']) if save_to_chat else ''
                 data = {
@@ -5617,6 +5678,7 @@ async def streaming_chat_response_handler(response, ctx):
                     'output': output,
                     'title': title,
                     **({'usage': usage} if usage else {}),
+                    **({'finish_reason': finish_reason} if finish_reason else {}),
                 }
 
                 if save_to_chat:
@@ -5628,6 +5690,7 @@ async def streaming_chat_response_handler(response, ctx):
                             {
                                 'done': True,
                                 'output': output,
+                                **({'finishReason': finish_reason} if finish_reason else {}),
                                 **({'usage': usage} if usage else {}),
                             },
                         )
@@ -5635,13 +5698,22 @@ async def streaming_chat_response_handler(response, ctx):
                         await Chats.upsert_message_to_chat_by_id_and_message_id(
                             metadata['chat_id'],
                             metadata['message_id'],
-                            {'done': True, 'usage': usage},
+                            {
+                                'done': True,
+                                'usage': usage,
+                                'output': output,
+                                **({'finishReason': finish_reason} if finish_reason else {}),
+                            },
                         )
                     else:
                         await Chats.upsert_message_to_chat_by_id_and_message_id(
                             metadata['chat_id'],
                             metadata['message_id'],
-                            {'done': True},
+                            {
+                                'done': True,
+                                'output': output,
+                                **({'finishReason': finish_reason} if finish_reason else {}),
+                            },
                         )
 
                 await publish_chat_finished_event(request, user, metadata, title, ''.join(content_parts), output)
@@ -5657,6 +5729,7 @@ async def streaming_chat_response_handler(response, ctx):
                     'content': ''.join(content_parts) or get_output_text(output),
                     'output': output,
                     **({'usage': usage} if usage else {}),
+                    **({'finish_reason': finish_reason} if finish_reason else {}),
                 }
                 await outlet_filter_handler(ctx)
                 await background_tasks_handler(ctx)

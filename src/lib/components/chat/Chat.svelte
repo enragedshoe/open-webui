@@ -68,6 +68,11 @@
 	import { AudioQueue } from '$lib/utils/audio';
 	import { createTemporaryChatId, isTemporaryChatId } from '$lib/utils/chatId';
 	import { getOutputText } from './Messages/structuredOutput';
+	import {
+		getStoredHouseholdFeatures,
+		modelAllowsHouseholdWebSearch,
+		restoreHouseholdFeatureControls
+	} from './householdFeatures';
 
 	import {
 		archiveChatById,
@@ -320,13 +325,14 @@
 	let showWebSearchConfirm = false;
 	let pendingWebSearchPrompt: string | null = null;
 	let webSearchConfirmed = false;
+	let householdFeatures;
+	$: householdFeatures = getStoredHouseholdFeatures(webSearchEnabled, codeInterpreterEnabled);
 
 	$: {
 		const currentModels = atSelectedModel?.id ? [atSelectedModel.id] : selectedModels;
-		const allModelsSupportWebSearch =
-			currentModels.filter(
-				(model) => $models.find((m) => m.id === model)?.info?.meta?.capabilities?.web_search ?? true
-			).length === currentModels.length;
+		const allModelsSupportWebSearch = currentModels.every((modelId) =>
+			modelAllowsHouseholdWebSearch($models.find((model) => model.id === modelId))
+		);
 
 		webSearchActive = Boolean(
 			$config?.features?.enable_web_search &&
@@ -529,7 +535,14 @@
 	}
 
 	let saveControlsTimer;
-	$: if (!loading && !$temporaryChatEnabled && $chatId && params && chatFiles) {
+	$: if (
+		!loading &&
+		!$temporaryChatEnabled &&
+		$chatId &&
+		params &&
+		chatFiles &&
+		householdFeatures
+	) {
 		clearTimeout(saveControlsTimer);
 		saveControlsTimer = setTimeout(saveControls, 400);
 	}
@@ -556,6 +569,7 @@
 		selectedFilterIds = [];
 		webSearchEnabled = false;
 		imageGenerationEnabled = false;
+		codeInterpreterEnabled = false;
 
 		const storageChatInput = sessionStorage.getItem(
 			`chat-input${chatIdProp ? `-${chatIdProp}` : ''}`
@@ -565,8 +579,6 @@
 		noteChatDebug('loadChat completed inside navigateHandler', { loaded });
 		if (loaded) {
 			await tick();
-			loading = false;
-			noteChatDebug('embedded chat loading false');
 			window.setTimeout(() => scrollToBottom(), 0);
 
 			await tick();
@@ -574,13 +586,6 @@
 			// Mark chat read when initially loading it
 			if (chatIdProp && !$temporaryChatEnabled) {
 				updateLastReadAt(chatIdProp);
-			}
-
-			// Process any queued requests if the chat is idle
-			const lastMessage = history.currentId ? history.messages[history.currentId] : null;
-			const isIdle = !lastMessage || lastMessage.role !== 'assistant' || lastMessage.done;
-			if (isIdle) {
-				await processNextInQueue(chatIdProp);
 			}
 
 			if (storageChatInput) {
@@ -600,6 +605,22 @@
 				} catch (e) {}
 			} else {
 				await setDefaults();
+				const restored = restoreHouseholdFeatureControls(chat?.chat?.household_features, {
+					webSearchEnabled,
+					codeInterpreterEnabled
+				});
+				webSearchEnabled = restored.webSearchEnabled;
+				codeInterpreterEnabled = restored.codeInterpreterEnabled;
+			}
+
+			loading = false;
+			noteChatDebug('chat loading false');
+
+			// Restore this chat's controls before a queued prompt is allowed to send.
+			const lastMessage = history.currentId ? history.messages[history.currentId] : null;
+			const isIdle = !lastMessage || lastMessage.role !== 'assistant' || lastMessage.done;
+			if (isIdle) {
+				await processNextInQueue(chatIdProp);
 			}
 
 			const chatInput = document.getElementById('chat-input');
@@ -2375,7 +2396,18 @@
 	};
 
 	const chatCompletionEventHandler = async (data, message, chatId) => {
-		const { id, done, choices, content, output, sources, selected_model_id, error, usage } = data;
+		const {
+			id,
+			done,
+			choices,
+			content,
+			output,
+			sources,
+			selected_model_id,
+			finish_reason,
+			error,
+			usage
+		} = data;
 
 		// Store raw OR-aligned output items from backend
 		if (output) {
@@ -2430,6 +2462,10 @@
 
 		if (usage) {
 			message.usage = usage;
+		}
+
+		if (finish_reason) {
+			message.finishReason = finish_reason;
 		}
 
 		history.messages[message.id] = message;
@@ -3510,10 +3546,7 @@
 					models: selectedModels,
 					system: $settings.system ?? undefined,
 					params: params,
-					household_features: {
-						memory: false,
-						chat_history: false
-					},
+					household_features: householdFeatures,
 					history: history,
 					messages: createMessagesList(history, history.currentId),
 					tags: [],
@@ -3558,10 +3591,7 @@
 					history: history,
 					messages: createMessagesList(history, history.currentId),
 					params: params,
-					household_features: {
-						memory: false,
-						chat_history: false
-					},
+					household_features: householdFeatures,
 					files: chatFiles
 				});
 			}
@@ -3571,14 +3601,10 @@
 	const saveControls = async () => {
 		if (!$chatId || $temporaryChatEnabled) return;
 		const loaded = chat?.chat ?? {};
-		const householdFeatures = {
-			memory: false,
-			chat_history: false
-		};
 		if (
 			equal(params, loaded.params ?? {}) &&
 			equal(chatFiles, loaded.files ?? []) &&
-			equal(householdFeatures, loaded.household_features ?? householdFeatures)
+			equal(householdFeatures, loaded.household_features)
 		)
 			return;
 

@@ -115,6 +115,8 @@
 			load_duration?: number;
 			usage?: unknown;
 		};
+		finishReason?: string;
+		meta?: { finish_reason?: string; [key: string]: unknown };
 		annotation?: { type: string; rating: number };
 	}
 
@@ -188,6 +190,23 @@
 	$: visibleResponseContent =
 		getOutputText(message.output) || removeAllDetails(message.content ?? '');
 	$: hasResponseContent = Boolean((message.content ?? '').trim() || message.output?.length);
+	$: finishReason =
+		message.finishReason ??
+		message.meta?.finish_reason ??
+		message.output?.find((item) => item.status === 'incomplete')?.finish_reason ??
+		(message.output?.some((item) => item.status === 'incomplete') ? 'incomplete' : null);
+	$: responseIncomplete = [
+		'length',
+		'max_tokens',
+		'max_output_tokens',
+		'content_filter',
+		'incomplete',
+		'malformed_stream',
+		'missing_finish_reason',
+		'premature_eof',
+		'response_cancelled',
+		'response_failed'
+	].includes(finishReason ?? '');
 
 	let edit = false;
 	let editedContent = '';
@@ -877,6 +896,23 @@
 
 							{#if message?.error}
 								<Error content={message?.error?.content ?? message.content} />
+							{/if}
+
+							{#if responseIncomplete}
+								<div
+									role="status"
+									class="mt-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-700 dark:bg-amber-950/40 dark:text-amber-100"
+								>
+									{finishReason === 'content_filter'
+										? $i18n.t('The provider stopped this response because of its content filter.')
+										: ['length', 'max_tokens', 'max_output_tokens'].includes(finishReason ?? '')
+											? $i18n.t(
+													'This response stopped at the output limit. Use Continue Response to keep going.'
+												)
+											: $i18n.t(
+													'This response did not finish normally. Use Continue Response to keep going.'
+												)}
+								</div>
 							{/if}
 
 							{#if (message?.sources || message?.citations) && (model?.info?.meta?.capabilities?.citations ?? true)}
