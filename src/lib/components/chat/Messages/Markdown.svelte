@@ -36,6 +36,8 @@
 	import MarkdownTokens from './Markdown/MarkdownTokens.svelte';
 
 	export let id = '';
+	export let chatId = '';
+	export let messageId = '';
 	export let content;
 	export let done = true;
 	export let model = null;
@@ -58,6 +60,7 @@
 
 	export let onSourceClick = () => {};
 	export let onTaskClick = () => {};
+	export let onToolCallResolved = () => {};
 
 	let tokens = [];
 	let pendingUpdate = null;
@@ -102,6 +105,8 @@
 	<MarkdownTokens
 		{tokens}
 		{id}
+		{chatId}
+		{messageId}
 		{done}
 		{save}
 		{preview}
@@ -114,6 +119,7 @@
 		{allowEmbeds}
 		{onTaskClick}
 		{onSourceClick}
+		{onToolCallResolved}
 		{onSave}
 		{onUpdate}
 		{onPreview}

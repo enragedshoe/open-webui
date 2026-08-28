@@ -4,6 +4,7 @@ import logging
 import re
 
 import requests
+from open_webui.env import TAVILY_API_BASE_URL
 from open_webui.retrieval.web.main import SearchResult, get_filtered_results
 
 log = logging.getLogger(__name__)
@@ -37,7 +38,7 @@ def search_tavily(
     Returns:
         A list of SearchResult objects.
     """
-    url = 'https://api.tavily.com/search'
+    url = f'{TAVILY_API_BASE_URL}/search'
     headers = {
         'Content-Type': 'application/json',
         'Authorization': f'Bearer {api_key}',
