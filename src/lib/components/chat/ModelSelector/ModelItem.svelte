@@ -9,6 +9,7 @@
 
 	import Tooltip from '$lib/components/common/Tooltip.svelte';
 	import { copyToClipboard, sanitizeResponseContent } from '$lib/utils';
+	import { resolveLocalizedModelDescription } from '$lib/utils/localizedContent';
 	import ArrowUpTray from '$lib/components/icons/ArrowUpTray.svelte';
 	import Check from '$lib/components/icons/Check.svelte';
 	import ModelItemMenu from './ModelItemMenu.svelte';
@@ -33,6 +34,8 @@
 
 	export let onClick: () => void = () => {};
 
+	$: localizedDescription = resolveLocalizedModelDescription(item.model, $i18n.language);
+
 	const copyLinkHandler = async (model) => {
 		const baseUrl = window.location.origin;
 		const res = await copyToClipboard(`${baseUrl}/?model=${encodeURIComponent(model.id)}`);
@@ -44,7 +47,7 @@
 		}
 	};
 
-	const modelInfoTooltip = (model, fallbackName: string) => {
+	const modelInfoTooltip = (model, fallbackName: string, description: string) => {
 		const meta = model?.info?.meta ?? {};
 		const technicalName = meta?.model_name ?? fallbackName;
 		const switchSeconds = Number(meta?.switch_estimate_seconds);
@@ -64,7 +67,7 @@
 		}
 
 		return `${marked.parse(
-			sanitizeResponseContent(meta?.description ?? '').replaceAll('\n', '<br>')
+			sanitizeResponseContent(description ?? '').replaceAll('\n', '<br>')
 		)}`;
 	};
 
@@ -271,8 +274,8 @@
 					</Tooltip>
 				{/if}
 
-				{#if item.model?.info?.meta?.description || item.model?.info?.meta?.model_name}
-					<Tooltip content={modelInfoTooltip(item.model, item.label)}>
+				{#if localizedDescription || item.model?.info?.meta?.model_name}
+					<Tooltip content={modelInfoTooltip(item.model, item.label, localizedDescription)}>
 						<div
 							class=" translate-y-[1px]"
 							aria-label={$i18n.t('About {{modelName}}', { modelName: item.label })}

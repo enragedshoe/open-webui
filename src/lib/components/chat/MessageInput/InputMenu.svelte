@@ -57,13 +57,13 @@
 	const toolApprovalModes = [
 		{
 			value: 'full',
-			label: 'Full access',
-			description: 'Run tools without asking for approval.'
+			label: $i18n.t('Full access'),
+			description: $i18n.t('Run tools without asking for approval.')
 		},
 		{
 			value: 'ask',
-			label: 'Ask for approval',
-			description: 'Stop before each tool call until you allow or deny it.'
+			label: $i18n.t('Ask for approval'),
+			description: $i18n.t('Stop before each tool call until you allow or deny it.')
 		}
 	];
 

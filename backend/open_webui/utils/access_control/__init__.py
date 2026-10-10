@@ -1,3 +1,4 @@
+import logging
 from typing import Any
 
 from open_webui.config import DEFAULT_USER_PERMISSIONS
@@ -13,6 +14,8 @@ from open_webui.models.groups import Groups
 from open_webui.models.users import UserModel
 from open_webui.utils.json_codec import JSONCodec
 from sqlalchemy.ext.asyncio import AsyncSession
+
+log = logging.getLogger(__name__)
 
 
 def fill_missing_permissions(permissions: dict[str, Any], default_permissions: dict[str, Any]) -> dict[str, Any]:
@@ -310,11 +313,12 @@ async def has_base_model_access(
     Walk the ``base_model_id`` chain and verify the caller has read access
     at every hop.
 
-    A base model without a ``model`` table row is admin-only, matching how
-    unregistered models are treated for direct use (``get_filtered_models``
-    hides them from non-admins and ``check_model_access`` rejects them), so
-    a shared preset cannot be used to reach a base model the caller could
-    not use directly.  Returns ``False`` the moment any hop denies access.
+    A raw provider base without a ``model`` table row remains hidden from
+    direct non-admin use by ``get_filtered_models``.  An explicitly granted
+    preset may route to that hidden provider model, making the preset's ACL
+    the least-privilege boundary.  Registered base-model hops still require
+    their own read grants.  Returns ``False`` when a registered hop denies
+    access.
     """
     from open_webui.models.access_grants import AccessGrants
     from open_webui.models.models import Models
@@ -325,7 +329,8 @@ async def has_base_model_access(
         seen.add(base_model_id)
         base_model_info = await Models.get_model_by_id(base_model_id, db=db)
         if base_model_info is None:
-            return user_role == 'admin'
+            # LOCALAI_COMPAT_RAW_BASE_PRESET: the granted preset remains the ACL boundary.
+            break
         if not (
             user_id == base_model_info.user_id
             or await AccessGrants.has_access(
@@ -337,6 +342,12 @@ async def has_base_model_access(
                 db=db,
             )
         ):
+            log.warning(
+                'Model access denied: user_id=%r model_id=%r base_model_id=%r reason=base_model_read_denied',
+                user_id,
+                model_info.id,
+                base_model_id,
+            )
             return False
         base_model_id = getattr(base_model_info, 'base_model_id', None)
     return True
@@ -381,6 +392,11 @@ async def check_model_access(
                     user_group_ids=user_group_ids,
                 )
             ):
+                log.warning(
+                    'Model access denied: user_id=%r model_id=%r reason=model_read_denied',
+                    user.id,
+                    model_info.id,
+                )
                 raise HTTPException(status_code=403, detail='Model not found')
 
             # Enforce access on chained base models
@@ -388,4 +404,5 @@ async def check_model_access(
                 raise HTTPException(status_code=403, detail='Model not found')
     else:
         if user.role != 'admin':
+            log.warning('Model access denied: user_id=%r reason=model_unregistered', user.id)
             raise HTTPException(status_code=403, detail='Model not found')

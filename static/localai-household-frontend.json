@@ -1,6 +1,7 @@
 {
-  "upstream_version": "0.11.0",
-  "source_commit": "f9590b8017199e56d5e953657e6498e3cef1d246",
-  "customization": "single-unified-chat-with-opt-in-web-search-private-file-analysis-and-device-location",
-  "built_at": "2026-08-03T13:20:21-04:00"
+  "kind": "household-source-template",
+  "upstream_version": "0.11.4",
+  "upstream_commit": "8bd8b4fac5e059578ac0c74b3c18d11139f88b7d",
+  "customization": "four-role-household-chat-with-private-references-local-location-and-file-analysis",
+  "deployment_manifest": "Replace with the installed artifact manifest from openwebui-deployment-marker.py before startup."
 }
